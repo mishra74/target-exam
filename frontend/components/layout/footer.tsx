@@ -1,6 +1,9 @@
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
-import { Logo } from './logo';
+
+import Image from 'next/image';
+import Logo from '@/public/logo.png';
+
 
 export function Footer() {
   const t = useTranslations('footer');
@@ -11,8 +14,8 @@ export function Footer() {
     <footer className="mt-16 border-t border-border bg-secondary/40">
       <div className="container grid gap-10 py-12 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <Logo />
-          <p className="mt-3 max-w-xs text-sm text-muted-foreground">{t('tagline')}</p>
+          
+          <Image src={Logo} alt="Target ExamTak" width={90} height={90} className="h-13 w-13 object-contain" />
         </div>
 
         <div>

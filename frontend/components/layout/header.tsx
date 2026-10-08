@@ -39,7 +39,7 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="container flex h-16 items-center justify-between gap-4">
         <Link href="/" className="shrink-0">
-          <Image src={Logo} alt="Target ExamTak" width={48} height={48} className="h-12 w-12 object-contain" />
+          <Image src={Logo} alt="Target ExamTak" width={90} height={90} className="h-13 w-13 object-contain" />
         </Link>
 
         <nav className="hidden items-center gap-1 lg:flex">
