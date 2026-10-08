@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import {
   Dialog,
@@ -96,13 +96,24 @@ export function QuestionFormDialog({
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<FormValues>(fromExisting(existing));
   const [saving, setSaving] = useState(false);
+  const [tagSearch, setTagSearch] = useState('');
 
   useEffect(() => {
-    if (open) setValues(fromExisting(existing));
+    if (open) {
+      setValues(fromExisting(existing));
+      setTagSearch('');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const topics = subjects.find((s) => s.id === values.subjectId)?.topics ?? [];
+  const filteredTags = useMemo(() => {
+    const search = tagSearch.trim().toLocaleLowerCase();
+    if (!search) return tags;
+    return tags.filter((tag) =>
+      [tag.nameEn, tag.nameHi].some((name) => name?.toLocaleLowerCase().includes(search)),
+    );
+  }, [tagSearch, tags]);
 
   const setOption = (index: number, patch: Partial<QuestionOptionInput>) => {
     setValues((v) => ({
@@ -148,7 +159,7 @@ export function QuestionFormDialog({
               <Select value={values.subjectId} onValueChange={(v) => setValues({ ...values, subjectId: v, topicId: '' })}>
                 <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
                 <SelectContent>
-                  {subjects.map((s) => <SelectItem key={s.id} value={s.id}>{s.nameEn}</SelectItem>)}
+                  {subjects.filter((s) => s.id).map((s, index) => <SelectItem key={`${s.id}-${index}`} value={s.id}>{s.nameEn}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -157,7 +168,7 @@ export function QuestionFormDialog({
               <Select value={values.topicId} onValueChange={(v) => setValues({ ...values, topicId: v })} disabled={!topics.length}>
                 <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
                 <SelectContent>
-                  {topics.map((t) => <SelectItem key={t.id} value={t.id}>{t.nameEn}</SelectItem>)}
+                  {topics.filter((t) => t.id).map((t, index) => <SelectItem key={`${t.id}-${index}`} value={t.id}>{t.nameEn}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -217,13 +228,20 @@ export function QuestionFormDialog({
           {tags.length > 0 && (
             <div className="space-y-1.5">
               <Label>Tags</Label>
+              <Input
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.target.value)}
+                placeholder="Filter tags..."
+                aria-label="Filter question tags"
+              />
               <div className="flex flex-wrap gap-2">
-                {tags.map((tag) => {
+                {filteredTags.map((tag, index) => {
                   const checked = values.tagIds.includes(tag.id);
                   return (
                     <button
-                      key={tag.id}
+                      key={`${tag.id || 'tag'}-${index}`}
                       type="button"
+                      aria-pressed={checked}
                       onClick={() =>
                         setValues((v) => ({
                           ...v,
@@ -242,6 +260,9 @@ export function QuestionFormDialog({
                     </button>
                   );
                 })}
+                {filteredTags.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No tags match that filter.</p>
+                )}
               </div>
             </div>
           )}

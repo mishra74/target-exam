@@ -10,12 +10,17 @@ import {
   PaginationDto,
   buildPaginationMeta,
 } from '../common/dto/pagination.dto';
-import { CreateQuestionDto, UpdateQuestionDto } from './dto/question.dto';
+import {
+  CreateQuestionDto,
+  ImportQuestionRowDto,
+  UpdateQuestionDto,
+} from './dto/question.dto';
 
 interface QuestionListFilters extends PaginationDto {
   subjectId?: string;
   topicId?: string;
   tagId?: string;
+  fullyEligible?: boolean;
 }
 
 const FULL_INCLUDE = {
@@ -34,9 +39,13 @@ export class QuestionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(filters: QuestionListFilters) {
-    const { page, limit, search, subjectId, topicId, tagId } = filters;
+    const { page, limit, search, subjectId, topicId, tagId, fullyEligible } =
+      filters;
     const where = {
       deletedAt: null,
+      ...(fullyEligible
+        ? { servingEligibility: QuestionServingEligibility.FULLY_ELIGIBLE }
+        : {}),
       ...(subjectId ? { subjectId } : {}),
       ...(topicId ? { topicId } : {}),
       ...(tagId ? { tagAssignments: { some: { questionTagId: tagId } } } : {}),
@@ -95,36 +104,76 @@ export class QuestionsService {
   async create(dto: CreateQuestionDto, createdById: string) {
     this.validate(dto, true);
 
-    return this.prisma.$transaction(async (tx) => {
-      const question = await tx.question.create({
-        data: {
-          examId: dto.examId,
-          examCycleId: dto.examCycleId,
-          syllabusVersionId: dto.syllabusVersionId,
-          subjectId: dto.subjectId,
-          topicId: dto.topicId,
-          subTopicId: dto.subTopicId,
-          source: dto.source,
-          sourceReference: dto.sourceReference,
-          type: dto.type,
-          difficulty: dto.difficulty,
-          marks: dto.marks,
-          negativeMarks: dto.negativeMarks,
-          createdById,
-        },
-      });
+    return this.prisma.$transaction((tx) =>
+      this.createInTransaction(tx, dto, createdById),
+    );
+  }
 
-      await this.writeTranslations(tx, question.id, dto);
-      await this.writeOptions(tx, question.id, dto.options);
-      if (dto.tagIds) {
-        await this.writeTags(tx, question.id, dto.tagIds);
+  async importMany(rows: ImportQuestionRowDto[], createdById: string) {
+    const invalidRows: { rowNumber: number; message: string }[] = [];
+    const validRows: ImportQuestionRowDto[] = [];
+
+    for (const row of rows) {
+      try {
+        this.validate(row, true);
+        validRows.push(row);
+      } catch (error) {
+        if (!(error instanceof BadRequestException)) throw error;
+        invalidRows.push({
+          rowNumber: row.rowNumber,
+          message: error.message,
+        });
       }
-      await this.recomputeLanguageStatus(tx, question.id);
+    }
 
-      return tx.question.findUniqueOrThrow({
-        where: { id: question.id },
-        include: FULL_INCLUDE,
-      });
+    const imported = await this.prisma.$transaction(
+      async (tx) => {
+        const result: { rowNumber: number; id: string }[] = [];
+        for (const row of validRows) {
+          const question = await this.createInTransaction(tx, row, createdById);
+          result.push({ rowNumber: row.rowNumber, id: question.id });
+        }
+        return result;
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
+
+    return { imported, invalidRows };
+  }
+
+  private async createInTransaction(
+    tx: Prisma.TransactionClient,
+    dto: CreateQuestionDto,
+    createdById: string,
+  ) {
+    const question = await tx.question.create({
+      data: {
+        examId: dto.examId,
+        examCycleId: dto.examCycleId,
+        syllabusVersionId: dto.syllabusVersionId,
+        subjectId: dto.subjectId,
+        topicId: dto.topicId,
+        subTopicId: dto.subTopicId,
+        source: dto.source,
+        sourceReference: dto.sourceReference,
+        type: dto.type,
+        difficulty: dto.difficulty,
+        marks: dto.marks,
+        negativeMarks: dto.negativeMarks,
+        createdById,
+      },
+    });
+
+    await this.writeTranslations(tx, question.id, dto);
+    await this.writeOptions(tx, question.id, dto.options);
+    if (dto.tagIds) {
+      await this.writeTags(tx, question.id, dto.tagIds);
+    }
+    await this.recomputeLanguageStatus(tx, question.id);
+
+    return tx.question.findUniqueOrThrow({
+      where: { id: question.id },
+      include: FULL_INCLUDE,
     });
   }
 

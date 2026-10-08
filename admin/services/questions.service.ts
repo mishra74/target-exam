@@ -31,21 +31,34 @@ export interface QuestionListOptions {
   topicId?: string;
   tagId?: string;
   search?: string;
+  fullyEligible?: boolean;
+}
+
+export interface QuestionImportResult {
+  imported: { rowNumber: number; id: string }[];
+  invalidRows: { rowNumber: number; message: string }[];
 }
 
 export const questionsService = {
   list: (token: string, opts: QuestionListOptions = {}) => {
-    const { page = 1, limit = 20, subjectId, topicId, tagId, search } = opts;
+    const { page = 1, limit = 20, subjectId, topicId, tagId, search, fullyEligible } = opts;
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (subjectId) params.set('subjectId', subjectId);
     if (topicId) params.set('topicId', topicId);
     if (tagId) params.set('tagId', tagId);
     if (search) params.set('search', search);
+    if (fullyEligible) params.set('fullyEligible', 'true');
     return apiFetch<Paginated<QuestionFull>>(`/questions?${params}`, { token });
   },
   get: (token: string, id: string) => apiFetch<QuestionFull>(`/questions/${id}`, { token }),
   create: (token: string, data: QuestionInput) =>
     apiFetch<QuestionFull>('/questions', { method: 'POST', token, body: data }),
+  importMany: (token: string, questions: (QuestionInput & { rowNumber: number })[]) =>
+    apiFetch<QuestionImportResult>('/questions/import', {
+      method: 'POST',
+      token,
+      body: { questions },
+    }),
   update: (token: string, id: string, data: Partial<QuestionInput>) =>
     apiFetch<QuestionFull>(`/questions/${id}`, { method: 'PATCH', token, body: data }),
   remove: (token: string, id: string) => apiFetch<void>(`/questions/${id}`, { method: 'DELETE', token }),

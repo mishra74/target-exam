@@ -31,11 +31,13 @@ export function QuestionSelectorDialog({
   subjects,
   tags,
   trigger,
+  bilingualRequired = true,
   onSave,
 }: {
   subjects: Subject[];
   tags: QuestionTag[];
   trigger?: React.ReactNode;
+  bilingualRequired?: boolean;
   onSave: (questionIds: string[]) => Promise<{
     added: string[];
     alreadyInTest: { questionId: string; message: string }[];
@@ -72,7 +74,7 @@ export function QuestionSelectorDialog({
       })
       .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Could not load questions'))
       .finally(() => setLoading(false));
-  }, [open, accessToken, page, search, tagId, subjectId]);
+  }, [open, accessToken, page, search, tagId, subjectId, bilingualRequired]);
 
   useEffect(() => {
     if (!open) {
@@ -124,6 +126,17 @@ export function QuestionSelectorDialog({
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Add questions from the Question Bank</DialogTitle>
+          {bilingualRequired && (
+            <p className="text-sm text-muted-foreground">
+              All questions can be selected. To save questions that are not fully bilingual
+              validated, turn off the bilingual requirement on the test first.
+            </p>
+          )}
+          {!bilingualRequired && (
+            <p className="text-sm text-muted-foreground">
+              All questions are shown, including legacy and single-language questions.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="flex flex-wrap gap-3">
@@ -140,14 +153,14 @@ export function QuestionSelectorDialog({
             <SelectTrigger className="w-48"><SelectValue placeholder="All tags" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All tags</SelectItem>
-              {tags.map((t) => <SelectItem key={t.id} value={t.id}>{t.nameEn}</SelectItem>)}
+              {tags.filter((t) => t.id).map((t, index) => <SelectItem key={`${t.id}-${index}`} value={t.id}>{t.nameEn}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={subjectId} onValueChange={(v) => { setSubjectId(v); setPage(1); }}>
             <SelectTrigger className="w-48"><SelectValue placeholder="All subjects" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All subjects</SelectItem>
-              {subjects.map((s) => <SelectItem key={s.id} value={s.id}>{s.nameEn}</SelectItem>)}
+              {subjects.filter((s) => s.id).map((s, index) => <SelectItem key={`${s.id}-${index}`} value={s.id}>{s.nameEn}</SelectItem>)}
             </SelectContent>
           </Select>
           <span className="ml-auto self-center text-sm text-muted-foreground">
@@ -161,14 +174,15 @@ export function QuestionSelectorDialog({
           ) : items.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">No questions match these filters.</p>
           ) : (
-            items.map((q) => {
+            items.map((q, index) => {
               const text = q.translations.find((t) => t.language === 'EN')?.text
                 || q.translations.find((t) => t.language === 'HI')?.text
                 || '(no text)';
               const checked = selected.has(q.id);
+              const eligible = q.servingEligibility === 'FULLY_ELIGIBLE';
               return (
                 <label
-                  key={q.id}
+                  key={`${q.id || 'question'}-${index}`}
                   className={`flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 text-sm hover:bg-secondary ${checked ? 'bg-primary/5' : ''}`}
                 >
                   <input
@@ -179,6 +193,9 @@ export function QuestionSelectorDialog({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{text}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {eligible ? 'Bilingual validated' : `Not eligible: ${q.status}`}
+                    </span>
                     {q.tagAssignments && q.tagAssignments.length > 0 && (
                       <span className="mt-0.5 block text-xs text-muted-foreground">
                         {q.tagAssignments.map((a) => a.questionTag.nameEn).join(', ')}

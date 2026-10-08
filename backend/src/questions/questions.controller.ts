@@ -10,7 +10,11 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { QuestionsService } from './questions.service';
-import { CreateQuestionDto, UpdateQuestionDto } from './dto/question.dto';
+import {
+  CreateQuestionDto,
+  ImportQuestionsDto,
+  UpdateQuestionDto,
+} from './dto/question.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -32,12 +36,14 @@ export class QuestionsController {
     @Query('subjectId') subjectId?: string,
     @Query('topicId') topicId?: string,
     @Query('tagId') tagId?: string,
+    @Query('fullyEligible') fullyEligible?: string,
   ) {
     return this.questionsService.findAll({
       ...pagination,
       subjectId,
       topicId,
       tagId,
+      fullyEligible: fullyEligible === 'true',
     });
   }
 
@@ -52,6 +58,14 @@ export class QuestionsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.questionsService.create(dto, user.id);
+  }
+
+  @Post('import')
+  import(
+    @Body() dto: ImportQuestionsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.questionsService.importMany(dto.questions, user.id);
   }
 
   @Patch(':id')

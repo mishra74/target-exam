@@ -4,11 +4,12 @@ import * as React from 'react';
 import { useTranslations } from 'next-intl';
 import { Menu, User as UserIcon } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
-import { Logo } from './logo';
+import Logo from '@/public/logo.png';
 import { LanguageSwitcher } from './language-switcher';
 import { NotificationBell } from './notification-bell';
 import { MobileNav } from './mobile-nav';
-import { Button } from '@/components/ui/button';
+import { Button} from '@/components/ui/button';
+import Image from 'next/image';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,7 +39,7 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="container flex h-16 items-center justify-between gap-4">
         <Link href="/" className="shrink-0">
-          <Logo />
+          <Image src={Logo} alt="Target ExamTak" width={48} height={48} className="h-12 w-12 object-contain" />
         </Link>
 
         <nav className="hidden items-center gap-1 lg:flex">

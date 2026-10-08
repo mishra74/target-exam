@@ -1,12 +1,12 @@
 /**
  * Corrective pass: re-derive QuestionTranslation/OptionTranslation text from
- * the still-present legacy staging data using the fixed stripHtml (which now
+ * the restored legacy source tables using the fixed stripHtml (which now
  * decodes named entities like &rsquo; &mdash; etc.), and update in place only
  * where the text actually changes. No new rows, no touching isCorrect/order/
  * tags/status -- purely fixes the decoded text.
  */
-const mysql = require('mysql2/promise');
 const { PrismaClient } = require('@prisma/client');
+const { connectLegacyDatabase } = require('./legacy-mysql');
 
 const prisma = new PrismaClient();
 
@@ -35,6 +35,7 @@ function stripHtml(html) {
 function parseOptions(optionsJson) {
   let obj;
   try { obj = JSON.parse(optionsJson); } catch { return []; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
   return Object.keys(obj)
     .filter((k) => /^option\d+$/.test(k))
     .sort((a, b) => Number(a.replace('option', '')) - Number(b.replace('option', '')))
@@ -42,64 +43,74 @@ function parseOptions(optionsJson) {
     .filter((o) => o.text.length > 0);
 }
 
+function languageFor(text) {
+  return /[\u0900-\u097f]/.test(text) ? 'HI' : 'EN';
+}
+
 async function main() {
-  const conn = await mysql.createConnection({
-    host: '127.0.0.1', port: 3307, user: 'root', password: 'root', database: 'test_mela',
-  });
+  const conn = await connectLegacyDatabase();
 
-  const [[{ total }]] = await conn.query('SELECT COUNT(*) as total FROM legacy_questions_staging');
-  console.log(`Rechecking ${total} legacy rows for entity-decoding fixes...`);
+  try {
+    const [[{ total }]] = await conn.query('SELECT COUNT(*) as total FROM questions');
+    console.log(`Rechecking ${total} legacy rows for entity-decoding fixes...`);
 
-  let updatedQuestions = 0;
-  let updatedOptions = 0;
-  const BATCH_SIZE = 500;
+    let updatedQuestions = 0;
+    let updatedOptions = 0;
+    const BATCH_SIZE = 500;
 
-  for (let offset = 0; offset < total; offset += BATCH_SIZE) {
-    const [rows] = await conn.query(
-      'SELECT id, question, options, qHint FROM legacy_questions_staging ORDER BY qId LIMIT ? OFFSET ?',
-      [BATCH_SIZE, offset],
-    );
+    for (let offset = 0; offset < total; offset += BATCH_SIZE) {
+      const [rows] = await conn.query(
+        'SELECT qId, question, options, qHint FROM questions ORDER BY qId LIMIT ? OFFSET ?',
+        [BATCH_SIZE, offset],
+      );
 
-    for (const row of rows) {
-      const correctText = stripHtml(row.question);
-      const correctExplanation = stripHtml(row.qHint) || null;
+      for (const row of rows) {
+        const questionId = `legacy_question_${row.qId}`;
+        const correctText = stripHtml(row.question);
+        const correctExplanation = stripHtml(row.qHint) || null;
+        const language = languageFor(correctText);
 
-      const translation = await prisma.questionTranslation.findUnique({
-        where: { questionId_language: { questionId: row.id, language: 'EN' } },
-      });
-      if (translation && (translation.text !== correctText || translation.explanation !== correctExplanation)) {
-        await prisma.questionTranslation.update({
-          where: { id: translation.id },
-          data: { text: correctText, explanation: correctExplanation },
+        const translations = await prisma.questionTranslation.findMany({
+          where: { questionId },
         });
-        updatedQuestions++;
-      }
-
-      const options = parseOptions(row.options);
-      for (const opt of options) {
-        const optionId = `${row.id}_opt_${opt.num}`;
-        const optTranslation = await prisma.optionTranslation.findUnique({
-          where: { optionId_language: { optionId, language: 'EN' } },
-        });
-        if (optTranslation && optTranslation.text !== opt.text) {
-          await prisma.optionTranslation.update({
-            where: { id: optTranslation.id },
-            data: { text: opt.text },
+        const translation =
+          translations.find((item) => item.language === language) ?? translations[0];
+        if (translation && (translation.text !== correctText || translation.explanation !== correctExplanation)) {
+          await prisma.questionTranslation.update({
+            where: { id: translation.id },
+            data: { text: correctText, explanation: correctExplanation },
           });
-          updatedOptions++;
+          updatedQuestions++;
+        }
+
+        const options = parseOptions(row.options);
+        for (const opt of options) {
+          const optionId = `${questionId}_opt_${opt.num}`;
+          const optTranslations = await prisma.optionTranslation.findMany({
+            where: { optionId },
+          });
+          const optTranslation =
+            optTranslations.find((item) => item.language === language) ?? optTranslations[0];
+          if (optTranslation && optTranslation.text !== opt.text) {
+            await prisma.optionTranslation.update({
+              where: { id: optTranslation.id },
+              data: { text: opt.text },
+            });
+            updatedOptions++;
+          }
         }
       }
+
+      console.log(`Progress: ${Math.min(offset + BATCH_SIZE, total)}/${total} (questions fixed: ${updatedQuestions}, options fixed: ${updatedOptions})`);
     }
 
-    console.log(`Progress: ${Math.min(offset + BATCH_SIZE, total)}/${total} (questions fixed: ${updatedQuestions}, options fixed: ${updatedOptions})`);
+    console.log(`Done. Questions fixed: ${updatedQuestions}, Options fixed: ${updatedOptions}`);
+  } finally {
+    await conn.end();
   }
-
-  console.log(`Done. Questions fixed: ${updatedQuestions}, Options fixed: ${updatedOptions}`);
-  await conn.end();
-  await prisma.$disconnect();
 }
 
 main().catch((e) => {
   console.error(e);
-  process.exit(1);
-});
+  process.exitCode = 1;
+}).finally(() => prisma.$disconnect());

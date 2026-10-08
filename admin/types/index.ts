@@ -123,6 +123,8 @@ export interface QuestionFull {
   id: string;
   subjectId?: string | null;
   topicId?: string | null;
+  status: string;
+  servingEligibility: 'FULLY_ELIGIBLE' | 'LEGACY_TEMPORARY' | 'NOT_ELIGIBLE';
   type: QuestionType;
   difficulty: Difficulty;
   marks: string;

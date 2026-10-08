@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { DataTable, type Column } from '@/components/shared/data-table';
 import { ConfirmDeleteButton } from '@/components/shared/confirm-delete-button';
 import { QuestionFormDialog } from '@/components/shared/question-form-dialog';
+import { QuestionImportDialog } from '@/components/shared/question-import-dialog';
 import { QuestionTagManagerDialog } from '@/components/shared/question-tag-manager-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -130,6 +131,11 @@ export default function QuestionBankPage() {
         action={
           accessToken && (
             <div className="flex items-center gap-2">
+              <QuestionImportDialog
+                subjects={subjects}
+                tags={tags}
+                onImported={load}
+              />
               <QuestionTagManagerDialog
                 tags={tags}
                 trigger={<Button variant="outline" size="sm"><TagIcon className="h-4 w-4" /> Manage tags</Button>}
@@ -160,14 +166,14 @@ export default function QuestionBankPage() {
           <SelectTrigger className="w-48"><SelectValue placeholder="All subjects" /></SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>All subjects</SelectItem>
-            {subjects.map((s) => <SelectItem key={s.id} value={s.id}>{s.nameEn}</SelectItem>)}
+            {subjects.filter((s) => s.id).map((s, index) => <SelectItem key={`${s.id}-${index}`} value={s.id}>{s.nameEn}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={tagId} onValueChange={(v) => { setTagId(v); setPage(1); }}>
           <SelectTrigger className="w-48"><SelectValue placeholder="All tags" /></SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>All tags</SelectItem>
-            {tags.map((t) => <SelectItem key={t.id} value={t.id}>{t.nameEn}</SelectItem>)}
+            {tags.filter((t) => t.id).map((t, index) => <SelectItem key={`${t.id}-${index}`} value={t.id}>{t.nameEn}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>

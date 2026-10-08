@@ -1,16 +1,15 @@
 /**
- * One-time, idempotent import of the legacy `questions`/`questiontags` data
- * (already staged into legacy_questions_staging / legacy_questiontags_staging
- * by import-legacy-staging.js) into the existing Question Bank architecture:
- * Question (by its pre-existing `legacy_question_<qId>` id) + QuestionTranslation
+ * Idempotent import of the legacy `questions`/`questiontags` tables, restored
+ * into a separate scratch MySQL database, into the existing Question Bank:
+ * Question (by its stable `legacy_question_<qId>` id) + QuestionTranslation
  * + QuestionOption + OptionTranslation + QuestionTag + QuestionTagAssignment.
  *
  * No new question table, no parallel answer system, no copy of question
  * content into a second place — this only populates the child rows the
  * existing Question Bank / Test Builder / exam engine already read from.
  */
-const mysql = require('mysql2/promise');
 const { PrismaClient, QuestionStatus, QuestionServingEligibility, QuestionSourceType } = require('@prisma/client');
+const { connectLegacyDatabase } = require('./legacy-mysql');
 
 const prisma = new PrismaClient();
 const BATCH_SIZE = 500;
@@ -59,6 +58,7 @@ function parseOptions(optionsJson) {
   } catch {
     return [];
   }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
   return Object.keys(obj)
     .filter((k) => /^option\d+$/.test(k))
     .sort((a, b) => Number(a.replace('option', '')) - Number(b.replace('option', '')))
@@ -66,8 +66,12 @@ function parseOptions(optionsJson) {
     .filter((o) => o.text.length > 0);
 }
 
+function languageFor(text) {
+  return /[\u0900-\u097f]/.test(text) ? 'HI' : 'EN';
+}
+
 async function importTags(conn) {
-  const [rows] = await conn.query('SELECT qtId, qtName FROM legacy_questiontags_staging');
+  const [rows] = await conn.query('SELECT qtId, qtName FROM questiontags');
   const map = new Map();
   for (const row of rows) {
     const nameEn = row.qtName?.trim() || `Tag ${row.qtId}`;
@@ -83,115 +87,129 @@ async function importTags(conn) {
 }
 
 async function main() {
-  const conn = await mysql.createConnection({
-    host: '127.0.0.1',
-    port: 3307,
-    user: 'root',
-    password: 'root',
-    database: 'test_mela',
-  });
+  const conn = await connectLegacyDatabase();
 
-  const tagMap = await importTags(conn);
+  try {
+    const tagMap = await importTags(conn);
+    const [[{ total: rawTotal }]] = await conn.query('SELECT COUNT(*) as total FROM questions');
+    const fullTotal = Number(rawTotal);
+    if (!Number.isSafeInteger(fullTotal)) {
+      throw new Error('The legacy question count is outside the supported range.');
+    }
+    const limit = process.env.IMPORT_LIMIT === undefined ? fullTotal : Number(process.env.IMPORT_LIMIT);
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error('IMPORT_LIMIT must be a positive integer.');
+    }
+    const total = Math.min(limit, fullTotal);
+    console.log(`Total legacy questions to process: ${total} (of ${fullTotal})`);
 
-  const [[{ total: fullTotal }]] = await conn.query('SELECT COUNT(*) as total FROM legacy_questions_staging');
-  const total = process.env.IMPORT_LIMIT ? Math.min(Number(process.env.IMPORT_LIMIT), fullTotal) : fullTotal;
-  console.log(`Total legacy questions to process: ${total} (of ${fullTotal})`);
+    let processed = 0;
+    let created = 0;
+    let skipped = 0;
 
-  let processed = 0;
-  let created = 0;
-  let skipped = 0;
+    for (let offset = 0; offset < total; offset += BATCH_SIZE) {
+      const [rows] = await conn.query(
+        'SELECT qId, qtId, question, marks, neg_marks, totalOptions, options, qType, correctAns, qHint FROM questions ORDER BY qId LIMIT ? OFFSET ?',
+        [Math.min(BATCH_SIZE, total - offset), offset],
+      );
 
-  for (let offset = 0; offset < total; offset += BATCH_SIZE) {
-    const [rows] = await conn.query(
-      'SELECT id, qId, qwId, qtId, question, marks, negativeMarks, options, correctAns, qHint, type, difficulty FROM legacy_questions_staging ORDER BY qId LIMIT ? OFFSET ?',
-      [BATCH_SIZE, offset],
-    );
+      const questionIds = rows.map((row) => `legacy_question_${row.qId}`);
+      const existing = await prisma.questionTranslation.findMany({
+        where: { questionId: { in: questionIds } },
+        select: { questionId: true },
+      });
+      const alreadyDone = new Set(existing.map((item) => item.questionId));
 
-    // Idempotency: skip questions that already have a translation (already imported by a prior run).
-    const ids = rows.map((r) => r.id);
-    const existing = await prisma.questionTranslation.findMany({
-      where: { questionId: { in: ids } },
-      select: { questionId: true },
-    });
-    const alreadyDone = new Set(existing.map((e) => e.questionId));
+      for (const row of rows) {
+        processed++;
+        const questionId = `legacy_question_${row.qId}`;
+        if (alreadyDone.has(questionId)) {
+          skipped++;
+          continue;
+        }
 
-    for (const row of rows) {
-      processed++;
-      if (alreadyDone.has(row.id)) {
-        skipped++;
-        continue;
-      }
+        const questionText = stripHtml(row.question);
+        const explanation = stripHtml(row.qHint) || null;
+        const options = parseOptions(row.options);
+        const correctNum = Number(row.correctAns);
+        const language = languageFor(questionText);
+        if (
+          !questionText ||
+          options.length < 2 ||
+          options.length !== Number(row.totalOptions) ||
+          String(row.qType).trim().toLowerCase() !== 'radio' ||
+          !Number.isInteger(correctNum) ||
+          !options.some((option) => option.num === correctNum)
+        ) {
+          console.warn(
+            `Skipped legacy question ${row.qId}: invalid text, option count, question type, or correct answer.`,
+          );
+          skipped++;
+          continue;
+        }
 
-      const questionText = stripHtml(row.question);
-      const explanation = stripHtml(row.qHint) || null;
-      const options = parseOptions(row.options);
-      if (!questionText || options.length < 2) {
-        skipped++;
-        continue;
-      }
-      const correctNum = parseInt(row.correctAns, 10);
-
-      try {
-        await prisma.$transaction(async (tx) => {
-          await tx.question.upsert({
-            where: { id: row.id },
-            update: {},
-            create: {
-              id: row.id,
-              type: row.type === 'MULTIPLE_CHOICE' ? 'MULTIPLE_CHOICE' : 'SINGLE_CHOICE',
-              difficulty: ['EASY', 'MEDIUM', 'HARD'].includes(row.difficulty) ? row.difficulty : 'MEDIUM',
-              marks: row.marks,
-              negativeMarks: row.negativeMarks,
-              status: QuestionStatus.MISSING_HINDI,
-              source: QuestionSourceType.IMPORTED,
-              sourceReference: `legacy_qid:${row.qId}`,
-              isLegacyGrandfathered: true,
-              servingEligibility: QuestionServingEligibility.LEGACY_TEMPORARY,
-            },
-          });
-
-          await tx.questionTranslation.create({
-            data: { questionId: row.id, language: 'EN', text: questionText, explanation },
-          });
-
-          for (const opt of options) {
-            const optionId = `${row.id}_opt_${opt.num}`;
-            await tx.questionOption.create({
-              data: {
-                id: optionId,
-                questionId: row.id,
-                order: opt.num - 1,
-                isCorrect: opt.num === correctNum,
+        try {
+          await prisma.$transaction(async (tx) => {
+            await tx.question.upsert({
+              where: { id: questionId },
+              update: {},
+              create: {
+                id: questionId,
+                marks: row.marks,
+                negativeMarks: row.neg_marks ?? 0,
+                status: language === 'HI' ? QuestionStatus.MISSING_ENGLISH : QuestionStatus.MISSING_HINDI,
+                source: QuestionSourceType.IMPORTED,
+                sourceReference: `legacy_qid:${row.qId}`,
+                isLegacyGrandfathered: true,
+                servingEligibility: QuestionServingEligibility.LEGACY_TEMPORARY,
               },
             });
-            await tx.optionTranslation.create({
-              data: { optionId, language: 'EN', text: opt.text },
-            });
-          }
 
-          const tagId = tagMap.get(row.qtId);
-          if (tagId) {
-            await tx.questionTagAssignment.create({
-              data: { questionId: row.id, questionTagId: tagId },
+            await tx.questionTranslation.create({
+              data: { questionId, language, text: questionText, explanation },
             });
-          }
-        });
-        created++;
-      } catch (e) {
-        console.error(`Failed on ${row.id}:`, e.message);
-        skipped++;
+
+            for (const opt of options) {
+              const optionId = `${questionId}_opt_${opt.num}`;
+              await tx.questionOption.create({
+                data: {
+                  id: optionId,
+                  questionId,
+                  order: opt.num - 1,
+                  isCorrect: opt.num === correctNum,
+                },
+              });
+              await tx.optionTranslation.create({
+                data: { optionId, language, text: opt.text },
+              });
+            }
+
+            const tagId = tagMap.get(row.qtId);
+            if (tagId) {
+              await tx.questionTagAssignment.create({
+                data: { questionId, questionTagId: tagId },
+              });
+            } else {
+              console.warn(`Legacy question ${row.qId} references missing question tag ${row.qtId}.`);
+            }
+          });
+          created++;
+        } catch (e) {
+          console.error(`Failed on legacy question ${row.qId}:`, e.message);
+          skipped++;
+        }
       }
+
+      console.log(`Progress: ${processed}/${total} (created ${created}, skipped ${skipped})`);
     }
 
-    console.log(`Progress: ${processed}/${total} (created ${created}, skipped ${skipped})`);
+    console.log(`Done. Created: ${created}, Skipped: ${skipped}, Total processed: ${processed}`);
+  } finally {
+    await conn.end();
   }
-
-  console.log(`Done. Created: ${created}, Skipped: ${skipped}, Total processed: ${processed}`);
-  await conn.end();
-  await prisma.$disconnect();
 }
 
 main().catch((e) => {
   console.error(e);
-  process.exit(1);
-});
+  process.exitCode = 1;
+}).finally(() => prisma.$disconnect());

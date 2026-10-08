@@ -92,7 +92,44 @@ Or individually: `npm run build:backend`, `npm run build:frontend`, `npm run bui
 
 To run the built backend: `cd backend && npm run start:prod` (after `npm run prisma:deploy` against your production database). The frontend/admin apps run with `npm start` in their own directories after `next build`.
 
-## 8. Project layout
+## 8. Importing legacy questions
+
+From the admin Question Bank, use **Import Excel** and download the template.
+The `.xlsx` template uses one row per question with bilingual question,
+explanation, and option columns, plus `correctOption`, optional subject/topic,
+comma-separated existing tag names, type, difficulty, and marks. Correct
+option numbers can be comma-separated for multiple-choice questions. The
+dialog previews and validates rows before import, supports up to 100 questions
+per workbook, and reports row-specific validation issues.
+
+The legacy question importer reads the original MySQL `questions` and
+`questiontags` tables. Restore the legacy SQL dump into a separate scratch
+database first; do not restore it over the application's database. Set
+`DATABASE_URL` to the application's database and `LEGACY_DB_*` to the scratch
+database connection, then run the importer from the repository root:
+
+```powershell
+$env:DATABASE_URL = "mysql://app_user:app_password@localhost:3306/test_mela"
+$env:LEGACY_DB_HOST = "localhost"
+$env:LEGACY_DB_PORT = "3306"
+$env:LEGACY_DB_USER = "legacy_user"
+$env:LEGACY_DB_PASSWORD = "legacy_password"
+$env:LEGACY_DB_NAME = "legacy_import"
+npm run import:legacy:questions -w backend
+```
+
+The import is repeatable: existing legacy question IDs and tag IDs are
+recognized, questions without valid text/options/correct answers are logged
+and skipped, and imported questions retain their legacy tags. A question
+containing Devanagari is stored as Hindi; otherwise it is stored as English.
+This does not translate content or infer separate bilingual translations. Use
+`IMPORT_LIMIT` to run a small positive-integer sample first. To re-derive
+question and option text from the source after a decoding fix, run
+`npm run fix:legacy:question-entities -w backend` with the same environment.
+Imported questions remain unpublished and follow the existing legacy
+eligibility/review workflow.
+
+## 9. Project layout
 
 ```
 backend/    NestJS API — one module per domain (auth, users, catalog, test-series,
@@ -103,11 +140,11 @@ admin/      Admin console — separate Next.js app, English-only UI, ADMIN-role 
 legacy-static/   The original static HTML/CSS/JS prototype, kept for reference
 ```
 
-## 9. Notes on the test engine
+## 10. Notes on the test engine
 
 Scoring, timers and negative marking are computed entirely server-side in `backend/src/attempts/attempts.service.ts`. The client sends only which option a student selected; the server independently looks up the correct option and computes marks — a tampered or forged `score`/`isCorrect` field in a request body is silently stripped by the global `ValidationPipe` (`whitelist: true`) before it ever reaches the service layer, since the DTOs for that endpoint don't declare those fields. A scheduled job auto-submits any attempt whose time has expired.
 
-## 10. Deployment (outline)
+## 11. Deployment (outline)
 
 - **Database**: run `npm run prisma:deploy -w backend` against your production MySQL instance (this applies migrations without needing shadow-database privileges).
 - **Backend**: build with `npm run build:backend`, run `node backend/dist/main.js` behind a process manager (pm2/systemd) or containerize it; set real `JWT_*` secrets, `RAZORPAY_*` keys, `CORS_ORIGINS` (your deployed frontend/admin origins), and `NODE_ENV=production`.

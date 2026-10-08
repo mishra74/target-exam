@@ -55,6 +55,7 @@ export interface TestInput {
   negativeMarks?: number;
   isFree?: boolean;
   price?: number;
+  bilingualRequired?: boolean;
 }
 
 export const testsService = {

@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -192,4 +193,19 @@ export class UpdateQuestionDto {
   @IsArray()
   @IsString({ each: true })
   tagIds?: string[];
+}
+
+export class ImportQuestionRowDto extends CreateQuestionDto {
+  @IsInt()
+  @Min(2)
+  rowNumber!: number;
+}
+
+export class ImportQuestionsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => ImportQuestionRowDto)
+  questions!: ImportQuestionRowDto[];
 }

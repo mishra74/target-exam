@@ -1,7 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { apiFetch, ApiError } from '@/lib/api';
+import {
+  apiFetch,
+  ApiError,
+  refreshApiSession,
+  setApiAccessToken,
+  subscribeToApiAccessToken,
+} from '@/lib/api';
 
 export interface AdminUser {
   id: string;
@@ -34,22 +40,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     let cancelled = false;
-    apiFetch<AuthResponse>('/auth/refresh', { method: 'POST' })
+    const unsubscribe = subscribeToApiAccessToken((token) => {
+      setAccessToken(token);
+      if (!token) {
+        setUser(null);
+        setStatus('unauthenticated');
+      }
+    });
+    refreshApiSession<AuthResponse>()
       .then((res) => {
         if (cancelled) return;
         if (res.user.role !== 'ADMIN') {
+          setApiAccessToken(null);
           setStatus('unauthenticated');
           return;
         }
         setUser(res.user);
+        setApiAccessToken(res.accessToken);
         setAccessToken(res.accessToken);
         setStatus('authenticated');
       })
       .catch(() => {
-        if (!cancelled) setStatus('unauthenticated');
+        if (!cancelled) {
+          setApiAccessToken(null);
+          setStatus('unauthenticated');
+        }
       });
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
@@ -58,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.user.role !== 'ADMIN') {
       throw new ApiError('This account does not have admin access', 403);
     }
+    setApiAccessToken(res.accessToken);
     setUser(res.user);
     setAccessToken(res.accessToken);
     setStatus('authenticated');
@@ -69,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore
     }
+    setApiAccessToken(null);
     setUser(null);
     setAccessToken(null);
     setStatus('unauthenticated');

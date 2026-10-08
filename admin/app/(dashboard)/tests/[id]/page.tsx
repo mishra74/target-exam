@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/hooks/use-auth';
 import { testsService } from '@/services/test-series.service';
 import { testSectionsService } from '@/services/test-sections.service';
@@ -28,6 +30,7 @@ export default function TestQuestionsPage({ params }: { params: Promise<{ id: st
   const [tags, setTags] = useState<QuestionTag[]>([]);
   const [loading, setLoading] = useState(true);
   const [newSectionTitle, setNewSectionTitle] = useState('');
+  const [updatingBilingualRequirement, setUpdatingBilingualRequirement] = useState(false);
 
   const load = async () => {
     if (!accessToken) return;
@@ -45,6 +48,24 @@ export default function TestQuestionsPage({ params }: { params: Promise<{ id: st
       toast.error(err instanceof ApiError ? err.message : 'Could not load test');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const setBilingualRequired = async (required: boolean) => {
+    if (!accessToken) return;
+    setUpdatingBilingualRequirement(true);
+    try {
+      await testsService.update(accessToken, id, { bilingualRequired: required });
+      toast.success(
+        required
+          ? 'Only fully bilingual-validated questions can be added'
+          : 'Legacy and single-language questions can now be added',
+      );
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update bilingual requirement');
+    } finally {
+      setUpdatingBilingualRequirement(false);
     }
   };
 
@@ -91,6 +112,7 @@ export default function TestQuestionsPage({ params }: { params: Promise<{ id: st
               <QuestionSelectorDialog
                 subjects={subjects}
                 tags={tags}
+                bilingualRequired={test.bilingualRequired ?? true}
                 trigger={<Button size="sm"><Plus className="h-4 w-4" /> Add existing questions</Button>}
                 onSave={(questionIds) => testsService.addQuestionsBulk(accessToken, id, questionIds).then((r) => { load(); return r; })}
               />
@@ -109,6 +131,25 @@ export default function TestQuestionsPage({ params }: { params: Promise<{ id: st
           )
         }
       />
+
+      <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-border p-4">
+        <div className="space-y-1">
+          <Label htmlFor="bilingual-required" className="font-medium">
+            Require fully bilingual-validated questions
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            When enabled, only published questions with complete English and Hindi content can be added.
+            Turn this off only for tests that intentionally use legacy or single-language questions.
+          </p>
+        </div>
+        <Switch
+          id="bilingual-required"
+          checked={test.bilingualRequired ?? true}
+          disabled={updatingBilingualRequirement}
+          onCheckedChange={setBilingualRequired}
+          aria-label="Require fully bilingual-validated questions"
+        />
+      </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-border p-3">
         <span className="text-sm font-medium text-muted-foreground">Sections:</span>
@@ -143,6 +184,7 @@ export default function TestQuestionsPage({ params }: { params: Promise<{ id: st
                 <QuestionSelectorDialog
                   subjects={subjects}
                   tags={tags}
+                  bilingualRequired={test.bilingualRequired ?? true}
                   trigger={<Button size="sm" variant="ghost">+ Add to section</Button>}
                   onSave={(questionIds) => testSectionsService.addQuestions(accessToken!, section.id, questionIds).then((r) => { load(); return r; })}
                 />
